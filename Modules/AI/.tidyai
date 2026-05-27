@@ -1,0 +1,41 @@
+﻿{
+    "newStructure":  [
+                         {
+                             "folderName":  "PowerShell Scripts",
+                             "items":  [
+                                           {
+                                               "name":  "OpenAIClient.ps1",
+                                               "extension":  ".ps1"
+                                           },
+                                           {
+                                               "name":  "PromptBuilder.ps1",
+                                               "extension":  ".ps1"
+                                           },
+                                           {
+                                               "name":  "ResponseParser.ps1",
+                                               "extension":  ".ps1"
+                                           }
+                                       ]
+                         }
+                     ],
+    "timestamp":  "2026-05-26 08:45:05",
+    "originalStructure":  [
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\Modules\\AI\\OpenAIClient.ps1",
+                                  "name":  "OpenAIClient.ps1",
+                                  "type":  "file"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\Modules\\AI\\PromptBuilder.ps1",
+                                  "name":  "PromptBuilder.ps1",
+                                  "type":  "file"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\Modules\\AI\\ResponseParser.ps1",
+                                  "name":  "ResponseParser.ps1",
+                                  "type":  "file"
+                              }
+                          ],
+    "version":  "2.0.0",
+    "targetPath":  "E:\\MANAGER\\TidyAI\\Modules\\AI"
+}

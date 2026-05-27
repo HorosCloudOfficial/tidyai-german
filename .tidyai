@@ -1,0 +1,133 @@
+﻿{
+    "newStructure":  [
+                         {
+                             "folderName":  "TidyAI Installation",
+                             "items":  [
+                                           {
+                                               "name":  "Install-TidyAI.ps1",
+                                               "extension":  ".ps1"
+                                           },
+                                           {
+                                               "name":  "Setup.bat",
+                                               "extension":  ".bat"
+                                           },
+                                           {
+                                               "name":  "Uninstall-TidyAI.ps1",
+                                               "extension":  ".ps1"
+                                           }
+                                       ]
+                         },
+                         {
+                             "folderName":  "TidyAI Scripts",
+                             "items":  [
+                                           {
+                                               "name":  "TidyAI.ps1",
+                                               "extension":  ".ps1"
+                                           },
+                                           {
+                                               "name":  "tidyai.sh",
+                                               "extension":  ".sh"
+                                           }
+                                       ]
+                         },
+                         {
+                             "folderName":  "Project Core",
+                             "items":  [
+                                           {
+                                               "name":  "Modules",
+                                               "extension":  ""
+                                           },
+                                           {
+                                               "name":  ".github",
+                                               "extension":  ".github"
+                                           }
+                                       ]
+                         },
+                         {
+                             "folderName":  "Media Assets",
+                             "items":  [
+                                           {
+                                               "name":  "media",
+                                               "extension":  ""
+                                           }
+                                       ]
+                         },
+                         {
+                             "folderName":  "Documentation",
+                             "items":  [
+                                           {
+                                               "name":  "LICENSE",
+                                               "extension":  ""
+                                           },
+                                           {
+                                               "name":  "README.md",
+                                               "extension":  ".md"
+                                           },
+                                           {
+                                               "name":  "README_SHELL.md",
+                                               "extension":  ".md"
+                                           }
+                                       ]
+                         }
+                     ],
+    "timestamp":  "2026-05-26 08:31:19",
+    "originalStructure":  [
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\.github",
+                                  "name":  ".github",
+                                  "type":  "folder"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\media",
+                                  "name":  "media",
+                                  "type":  "folder"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\Modules",
+                                  "name":  "Modules",
+                                  "type":  "folder"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\Install-TidyAI.ps1",
+                                  "name":  "Install-TidyAI.ps1",
+                                  "type":  "file"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\LICENSE",
+                                  "name":  "LICENSE",
+                                  "type":  "file"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\README.md",
+                                  "name":  "README.md",
+                                  "type":  "file"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\README_SHELL.md",
+                                  "name":  "README_SHELL.md",
+                                  "type":  "file"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\Setup.bat",
+                                  "name":  "Setup.bat",
+                                  "type":  "file"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\TidyAI.ps1",
+                                  "name":  "TidyAI.ps1",
+                                  "type":  "file"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\tidyai.sh",
+                                  "name":  "tidyai.sh",
+                                  "type":  "file"
+                              },
+                              {
+                                  "fullPath":  "E:\\MANAGER\\TidyAI\\Uninstall-TidyAI.ps1",
+                                  "name":  "Uninstall-TidyAI.ps1",
+                                  "type":  "file"
+                              }
+                          ],
+    "version":  "2.0.0",
+    "targetPath":  "E:\\MANAGER\\TidyAI"
+}

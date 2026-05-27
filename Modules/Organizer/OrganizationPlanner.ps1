@@ -1,0 +1,442 @@
+# ==============================================================================
+# TIDYAI - ORGANIZATION PLANNING & COORDINATION
+# ==============================================================================
+
+function Confirm-AndApplyOrganization {
+    param([array]$Structure)
+    
+    if (-not $Structure -or $Structure.Count -eq 0) {
+        Write-ColorText "Keine Änderungen anzuwenden." $Colors.Info
+        return
+    }
+    
+    Write-ColorText "========================================" $Colors.Primary
+    Write-ColorText "Möchtest du diese Änderungen anwenden?" $Colors.Info
+    Write-Host ""
+    
+    # Ask for user confirmation
+    $confirmation = Read-Host "Apply organization? (Y/N)"
+    
+    if ($confirmation -match '^[Yy]') {
+        # Save current state for undo before making changes
+        Write-ColorText "Speichere Rückgängig-Informationen..." $Colors.Info
+        
+        # Get current folder structure before organization
+        $originalItems = Get-ChildItem $script:CurrentTargetPath -Force | Where-Object { $_.Name -ne ".tidyai" }
+        $originalStructure = @()
+        foreach ($item in $originalItems) {
+            $originalStructure += @{
+                name = $item.Name
+                type = if ($item.PSIsContainer) { "folder" } else { "file" }
+                fullPath = $item.FullName
+            }
+        }
+        
+        # Save undo state
+        $undoSaved = Save-OrganizationState -TargetPath $script:CurrentTargetPath -OriginalStructure $originalStructure -NewStructure $Structure
+        
+        if ($undoSaved) {
+            Write-ColorText "Undo information saved successfully" $Colors.Success
+        } else {
+            Write-ColorText "Warning: Could not save undo information" $Colors.Warning
+            $continueAnyway = Read-Host "Continue without undo capability? (Y/N)"
+            if ($continueAnyway -notmatch '^[Yy]') {
+                Write-ColorText "Organization cancelled." $Colors.Warning
+                return
+            }
+        }
+        
+        # Apply the organization
+        Apply-Organization -SuggestedStructure $Structure -TargetPath $script:CurrentTargetPath
+        
+        # Show post-organization undo prompt
+        Show-PostOrganizationPrompt -TargetPath $script:CurrentTargetPath
+    } else {
+        Write-ColorText "Organization cancelled. No files were moved." $Colors.Warning
+    }
+    
+    Write-Host ""
+}
+
+function Start-FileOrganization {
+    param([array]$Items)
+    
+    # Determine processing strategy based on file count
+    if ($Items.Count -le 20) {
+        # Single batch processing for smaller folders
+        Invoke-SingleBatchProcessing -Files $Items
+    } else {
+        # Multi-batch processing for larger folders
+        Invoke-MultiBatchProcessing -Files $Items
+    }
+}
+
+function Invoke-SingleBatchProcessing {
+    param([array]$Files)
+    
+    Write-ColorText "Verarbeite alle $($Files.Count) Dateien in einem einzigen Stapel..." $Colors.Info
+    Write-Host ""
+    
+    try {
+        # Build JSON for single batch
+        $jsonData = New-BatchJson -Items $Files -ExistingStructure @()
+        
+        # Send to Groq
+        $response = Invoke-OpenAIRequest -JsonData $jsonData -RequestType "batch"
+        
+        if ($null -eq $response) {
+            Write-ColorText "Fehler beim Abrufen der Antwort von Groq" $Colors.Error
+            return
+        }
+        
+        # Process response
+        $structure = ConvertFrom-AIResponse -JsonResponse $response -OriginalItems $Files
+        
+        if ($structure) {
+            # Validate final structure
+            $validatedStructure = Test-FinalStructure -OriginalFiles $Files -OrganizedStructure $structure
+            
+            if ($validatedStructure) {
+                Show-OrganizationTree -Structure $validatedStructure
+                Confirm-AndApplyOrganization -Structure $validatedStructure
+            }
+        }
+    }
+    catch {
+        Write-ColorText "Fehler bei Einzelstapel-Verarbeitung: $($_.Exception.Message)" "Red"
+    }
+}
+
+function Invoke-MultiBatchProcessing {
+    param([array]$Files)
+    
+    Write-ColorText "Starte Multi-Stapel-Verarbeitung für $($Files.Count) Dateien..." $Colors.Info
+    Write-Host ""
+    
+    try {
+        # Initialize master organization structure
+        $masterStructure = [System.Collections.ArrayList]@()
+        $processedFiles = [System.Collections.ArrayList]@()
+        
+        # Create mixed batches with adaptive sizing
+        $allFiles = $Files | Sort-Object name
+        $batchNumber = 1
+        $currentBatchSize = 20  # Groq-optimiert: 20 Dateien pro Batch
+        $consecutive400Errors = 0
+        $totalBatches = [Math]::Ceiling($Files.Count / $currentBatchSize)
+        $fileIndex = 0
+        
+        while ($fileIndex -lt $allFiles.Count) {
+            # Take up to current batch size for this batch
+            $batchSize = [Math]::Min($currentBatchSize, ($allFiles.Count - $fileIndex))
+            $currentBatch = $allFiles[$fileIndex..($fileIndex + $batchSize - 1)]
+            $fileIndex += $batchSize
+            
+            Write-ColorText "Verarbeite Stapel $batchNumber/$totalBatches ($($currentBatch.Count) Dateien, Stapelgröße: $currentBatchSize)..." $Colors.Info
+            
+            # Process this batch with simple retry logic
+            $batchResult = Invoke-BatchProcessing -Files $currentBatch -ExistingStructure $masterStructure -BatchNumber $batchNumber
+            
+            # If failed, retry once after 8 seconds
+            if ($null -eq $batchResult) {
+                Write-ColorText "Stapel $batchNumber fehlgeschlagen, versuche erneut in 8 Sekunden..." $Colors.Warning
+                Start-Sleep -Seconds 8
+                $batchResult = Invoke-BatchProcessing -Files $currentBatch -ExistingStructure $masterStructure -BatchNumber $batchNumber
+                
+                # If still failed, track consecutive 400 errors
+                if ($null -eq $batchResult) {
+                    $consecutive400Errors++
+                    Write-ColorText "Aufeinanderfolgende 400-Fehler: $consecutive400Errors" $Colors.Warning
+                    
+                    # Reduce batch size if we get multiple 400 errors
+                    if ($consecutive400Errors -ge 2 -and $currentBatchSize -gt 25) {
+                        $currentBatchSize = [Math]::Max(25, [Math]::Floor($currentBatchSize * 0.7))
+                        Write-ColorText "Reduziere Stapelgröße auf $currentBatchSize aufgrund wiederholter 400-Fehler" $Colors.Warning
+                        $totalBatches = [Math]::Ceiling(($allFiles.Count - $fileIndex + $batchSize) / $currentBatchSize) + $batchNumber - 1
+                    }
+                }
+            }
+            
+            if ($batchResult) {
+                # Reset consecutive error counter on success
+                $consecutive400Errors = 0
+                
+                # Merge batch result with master structure
+                $masterStructure = Merge-BatchResults -MasterStructure $masterStructure -BatchResult $batchResult
+                
+                # Track processed files
+                foreach ($file in $currentBatch) {
+                    [void]$processedFiles.Add($file)
+                }
+                
+                Write-ColorText "Stapel $batchNumber erfolgreich abgeschlossen" $Colors.Success
+            } else {
+                Write-ColorText "Stapel $batchNumber fehlgeschlagen - überspringe" $Colors.Error
+            }
+            
+            $batchNumber++
+            Write-Host ""
+        }
+        
+        # Final validation and recovery
+        Write-ColorText "Führe finale Validierung durch..." $Colors.Info
+        $finalStructure = Test-FinalStructure -OriginalFiles $Files -OrganizedStructure $masterStructure
+        
+        if ($finalStructure) {
+            Write-ColorText "Multi-Stapel-Verarbeitung erfolgreich abgeschlossen!" $Colors.Success
+            Write-Host ""
+            Show-OrganizationTree -Structure $finalStructure
+            Confirm-AndApplyOrganization -Structure $finalStructure
+        } else {
+            Write-ColorText "Finale Validierung fehlgeschlagen" $Colors.Error
+        }
+    }
+    catch {
+        Write-ColorText "Fehler bei Multi-Stapel-Verarbeitung: $($_.Exception.Message)" "Red"
+    }
+}
+
+function Invoke-BatchProcessing {
+    param([array]$Files, [array]$ExistingStructure, [int]$BatchNumber, [string]$RequestType = "batch")
+    
+    try {
+        # Build JSON for this batch
+        $jsonData = New-BatchJson -Items $Files -ExistingStructure $ExistingStructure
+        
+        # Send to Groq
+        $existingFolders = $ExistingStructure | ForEach-Object { $_.folderName }
+        $response = Invoke-OpenAIRequest -JsonData $jsonData -RequestType $RequestType -ExistingFolders $existingFolders -BatchNumber $BatchNumber
+        
+        if ($null -eq $response) {
+            Write-ColorText "Stapel ${BatchNumber}: Fehler beim Abrufen der KI-Antwort" $Colors.Error
+            return $null
+        }
+        
+        # Process AI response
+        $batchStructure = ConvertFrom-AIResponse -JsonResponse $response -OriginalItems $Files
+        
+        if ($batchStructure) {
+            Write-ColorText "Stapel ${BatchNumber}: $($Files.Count) Dateien in $($batchStructure.Count) Ordner verarbeitet" $Colors.Success
+            return $batchStructure
+        }
+        
+        return $null
+    }
+    catch {
+        Write-ColorText "Stapel ${BatchNumber}: Fehler bei Verarbeitung - $($_.Exception.Message)" $Colors.Error
+        return $null
+    }
+}
+
+function Merge-BatchResults {
+    param([System.Collections.ArrayList]$MasterStructure, [array]$BatchResult)
+    
+    foreach ($batchFolder in $BatchResult) {
+        # Check if folder already exists in master structure
+        $existingFolder = $MasterStructure | Where-Object { $_.folderName -eq $batchFolder.folderName }
+        
+        if ($existingFolder) {
+            # Merge files into existing folder
+            $existingItems = [System.Collections.ArrayList]@($existingFolder.items)
+            foreach ($item in $batchFolder.items) {
+                [void]$existingItems.Add($item)
+            }
+            $existingFolder.items = $existingItems.ToArray()
+        } else {
+            # Add new folder to master structure
+            [void]$MasterStructure.Add($batchFolder)
+        }
+    }
+    
+    return $MasterStructure
+}
+
+function Get-MissedFiles {
+    param([array]$OriginalFiles, [array]$OrganizedStructure)
+    
+    # Get all items that were organized
+    $organizedItems = @()
+    foreach ($folder in $OrganizedStructure) {
+        foreach ($item in $folder.items) {
+            $organizedItems += $item.name
+        }
+    }
+    
+    # Find files that weren't organized
+    $missedFiles = @()
+    foreach ($file in $OriginalFiles) {
+        if ($organizedItems -notcontains $file.name) {
+            $missedFiles += $file
+        }
+    }
+    
+    return $missedFiles
+}
+
+function Test-FinalStructure {
+    param([array]$OriginalFiles, [array]$OrganizedStructure)
+    
+    Write-ColorText "Validiere finale Organisationsstruktur..." $Colors.Info
+    
+    try {
+        # Check for missed files
+        $missedFiles = Get-MissedFiles -OriginalFiles $OriginalFiles -OrganizedStructure $OrganizedStructure
+        
+        if ($missedFiles.Count -gt 0) {
+            Write-ColorText "$($missedFiles.Count) Dateien gefunden, die Wiederherstellungsverarbeitung benötigen..." $Colors.Warning
+            
+            # Process missed files with recovery logic
+            $recoveryStructure = Process-MissedFiles -MissedFiles $missedFiles -ExistingStructure $OrganizedStructure
+            
+            if ($recoveryStructure) {
+                # Merge recovery results with main structure
+                $finalStructure = Merge-BatchResults -MasterStructure ([System.Collections.ArrayList]@($OrganizedStructure)) -BatchResult $recoveryStructure
+                return @($finalStructure)
+            }
+        }
+        
+        return $OrganizedStructure
+    }
+    catch {
+        Write-ColorText "Fehler bei finaler Validierung: $($_.Exception.Message)" $Colors.Error
+        return $null
+    }
+}
+
+function Process-MissedFiles {
+    param([array]$MissedFiles, [array]$ExistingStructure)
+    
+    try {
+        Write-ColorText "Verarbeite $($MissedFiles.Count) verpasste Dateien mit Multi-Pass-Wiederherstellung..." $Colors.Info
+        
+        $masterStructure = [System.Collections.ArrayList]@($ExistingStructure)
+        $remainingFiles = $MissedFiles
+        $passNumber = 1
+        $maxPasses = 3
+        
+        # Multi-pass recovery: try up to 3 complete passes
+        while ($remainingFiles.Count -gt 0 -and $passNumber -le $maxPasses) {
+            Write-ColorText "=== Wiederherstellungs-Durchlauf $passNumber/$maxPasses - Verarbeite $($remainingFiles.Count) Dateien ===" $Colors.Info
+            
+            # Process all remaining files in 75-item batches for this pass
+            $passResult = Process-FilesInBatches -Files $remainingFiles -ExistingStructure $masterStructure -PassNumber $passNumber
+            
+            if ($passResult) {
+                # Update master structure with results from this pass
+                $masterStructure = $passResult
+                
+                # Check what files are still missing after this complete pass
+                $originalFileNames = $MissedFiles | ForEach-Object { $_.name }
+                $organizedFileNames = @()
+                foreach ($folder in $masterStructure) {
+                    foreach ($item in $folder.items) {
+                        $organizedFileNames += $item.name
+                    }
+                }
+                
+                # Find files that are still not organized
+                $stillMissing = @()
+                foreach ($originalFile in $MissedFiles) {
+                    if ($organizedFileNames -notcontains $originalFile.name) {
+                        $stillMissing += $originalFile
+                    }
+                }
+                
+                $remainingFiles = $stillMissing
+                Write-ColorText "Durchlauf $passNumber abgeschlossen. $($remainingFiles.Count) Dateien benötigen noch Verarbeitung." $Colors.Info
+            } else {
+                Write-ColorText "Durchlauf $passNumber vollständig fehlgeschlagen" $Colors.Warning
+            }
+            
+            $passNumber++
+            Write-Host ""
+        }
+        
+        # If we still have files after all passes, move them to "Unorganized Files" folder
+        if ($remainingFiles.Count -gt 0) {
+            Write-ColorText "Verschiebe finale $($remainingFiles.Count) Dateien in Ordner 'Nicht organisierte Dateien'..." $Colors.Warning
+            $unorganizedFolder = Create-UnorganizedFolder -MissedFiles $remainingFiles
+            if ($unorganizedFolder) {
+                # Ensure masterStructure is an ArrayList before adding
+                if ($masterStructure -isnot [System.Collections.ArrayList]) {
+                    $masterStructure = [System.Collections.ArrayList]@($masterStructure)
+                }
+                $masterStructure.Add($unorganizedFolder) | Out-Null
+                Write-ColorText "Ordner 'Nicht organisierte Dateien' erstellt für $($remainingFiles.Count) Dateien" $Colors.Success
+            }
+        }
+        
+        return @($masterStructure)
+    }
+    catch {
+        Write-ColorText "Fehler bei Verarbeitung verpasster Dateien: $($_.Exception.Message)" $Colors.Error
+        return $null
+    }
+}
+
+function Process-FilesInBatches {
+    param([array]$Files, [array]$ExistingStructure, [int]$PassNumber)
+    
+    try {
+        $masterStructure = [System.Collections.ArrayList]@($ExistingStructure)
+        $allFiles = $Files | Sort-Object name
+        $batchNumber = 1
+        $currentBatchSize = 75
+        $totalBatches = [Math]::Ceiling($Files.Count / $currentBatchSize)
+        $fileIndex = 0
+        
+        while ($fileIndex -lt $allFiles.Count) {
+            $batchSize = [Math]::Min($currentBatchSize, ($allFiles.Count - $fileIndex))
+            $currentBatch = $allFiles[$fileIndex..($fileIndex + $batchSize - 1)]
+            $fileIndex += $batchSize
+            
+            Write-ColorText "  Durchlauf $PassNumber - Stapel $batchNumber/$totalBatches ($($currentBatch.Count) Dateien)..." $Colors.Info
+            
+            $batchResult = Invoke-BatchProcessing -Files $currentBatch -ExistingStructure $masterStructure -BatchNumber $batchNumber -RequestType "recovery"
+            
+            if ($batchResult) {
+                $masterStructure = Merge-BatchResults -MasterStructure $masterStructure -BatchResult $batchResult
+                Write-ColorText "  Durchlauf $PassNumber - Stapel $batchNumber abgeschlossen" $Colors.Success
+            } else {
+                Write-ColorText "  Durchlauf $PassNumber - Stapel $batchNumber fehlgeschlagen" $Colors.Warning
+            }
+            
+            $batchNumber++
+        }
+        
+        return @($masterStructure)
+    }
+    catch {
+        Write-ColorText "Fehler bei Stapelverarbeitung: $($_.Exception.Message)" $Colors.Error
+        return $null
+    }
+}
+
+function Create-UnorganizedFolder {
+    param([array]$MissedFiles)
+    
+    try {
+        $unorganizedItems = @()
+        foreach ($file in $MissedFiles) {
+            $unorganizedItems += [PSCustomObject]@{
+                name = $file.name
+                extension = if ($file.name.Contains('.')) { 
+                    [System.IO.Path]::GetExtension($file.name) 
+                } else { 
+                    "" 
+                }
+            }
+        }
+        
+        $unorganizedFolder = [PSCustomObject]@{
+            folderName = "Unorganized Files"
+            items = $unorganizedItems
+        }
+        
+        return $unorganizedFolder
+    }
+    catch {
+        Write-ColorText "Fehler beim Erstellen des Nicht-organisiert-Ordners: $($_.Exception.Message)" $Colors.Error
+        return $null
+    }
+}
